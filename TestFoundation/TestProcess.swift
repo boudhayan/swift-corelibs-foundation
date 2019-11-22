@@ -80,8 +80,15 @@ class TestProcess : XCTestCase {
 
         let inputPipe = Pipe()
         process.standardInput = inputPipe
+        process.standardError = FileHandle.nullDevice
         try process.run()
-        inputPipe.fileHandleForWriting.write("Hello, 🐶.\n".data(using: .utf8)!)
+        let msg = try XCTUnwrap("Hello, 🐶.\n".data(using: .utf8))
+        do {
+            try inputPipe.fileHandleForWriting.write(contentsOf: msg)
+        } catch {
+            XCTFail("Cant write to pipe: \(error)")
+            return
+        }
 
         // Close the input pipe to send EOF to cat.
         inputPipe.fileHandleForWriting.closeFile()
@@ -255,17 +262,18 @@ class TestProcess : XCTestCase {
             if (dir.hasSuffix("/") && dir != "/") || dir.hasSuffix("\\") {
                dir.removeLast()
             }
-            return dir
+            return dir.standardizePath()
         }()
 
         let fm = FileManager.default
         let previousWorkingDirectory = fm.currentDirectoryPath
+        XCTAssertNotEqual(previousWorkingDirectory.standardizePath(), tmpDir)
 
         // Test that getcwd() returns the currentDirectoryPath
         do {
             let (pwd, _) = try runTask([xdgTestHelperURL().path, "--getcwd"], currentDirectoryPath: tmpDir)
             // Check the sub-process used the correct directory
-            XCTAssertEqual(pwd.trimmingCharacters(in: .newlines), tmpDir)
+            XCTAssertEqual(pwd.trimmingCharacters(in: .newlines).standardizePath(), tmpDir)
         } catch {
             XCTFail("Test failed: \(error)")
         }
@@ -274,7 +282,9 @@ class TestProcess : XCTestCase {
         do {
             let (pwd, _) = try runTask([xdgTestHelperURL().path, "--echo-PWD"], currentDirectoryPath: tmpDir)
             // Check the sub-process used the correct directory
-            XCTAssertEqual(pwd.trimmingCharacters(in: .newlines), tmpDir)
+            let cwd = FileManager.default.currentDirectoryPath.standardizePath()
+            XCTAssertNotEqual(cwd, tmpDir)
+            XCTAssertNotEqual(pwd.trimmingCharacters(in: .newlines).standardizePath(), tmpDir)
         } catch {
             XCTFail("Test failed: \(error)")
         }
@@ -319,15 +329,26 @@ class TestProcess : XCTestCase {
         XCTAssertEqual(fm.currentDirectoryPath, cwd)
 
         do {
+            // Check running the process twice throws an error.
+            let process = Process()
+            process.executableURL = xdgTestHelperURL()
+            process.arguments = ["--exit", "0"]
+            XCTAssertNoThrow(try process.run())
+            process.waitUntilExit()
+            XCTAssertThrowsError(try process.run()) {
+                let nserror = ($0 as! NSError)
+                XCTAssertEqual(nserror.domain, NSCocoaErrorDomain)
+                let code = CocoaError(_nsError: nserror).code
+                XCTAssertEqual(code, .executableLoad)
+            }
+        }
+
+        do {
             let process = Process()
             process.executableURL = xdgTestHelperURL()
             process.arguments = ["--exit", "0"]
             process.currentDirectoryURL = URL(fileURLWithPath: "/.../_no_such_directory", isDirectory: true)
-            try process.run()
-            XCTFail("Executed \(xdgTestHelperURL().path) with invalid currentDirectoryURL")
-            process.terminate()
-            process.waitUntilExit()
-        } catch {
+            XCTAssertThrowsError(try process.run())
         }
         XCTAssertEqual(fm.currentDirectoryPath, cwd)
 
@@ -336,11 +357,7 @@ class TestProcess : XCTestCase {
             process.executableURL = URL(fileURLWithPath: "/..", isDirectory: false)
             process.arguments = []
             process.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            try process.run()
-            XCTFail("Somehow executed a directory!")
-            process.terminate()
-            process.waitUntilExit()
-        } catch {
+            XCTAssertThrowsError(try process.run())
         }
         XCTAssertEqual(fm.currentDirectoryPath, cwd)
         fm.changeCurrentDirectoryPath(cwd)
@@ -550,21 +567,188 @@ class TestProcess : XCTestCase {
         task.executableURL = url
         task.arguments = []
         let stdoutPipe = Pipe()
+        let dataLock = NSLock()
         task.standardOutput = stdoutPipe
 
         var stdoutData = Data()
         stdoutPipe.fileHandleForReading.readabilityHandler = { fh in
-            stdoutData.append(fh.availableData)
+            dataLock.synchronized {
+                stdoutData.append(fh.availableData)
+            }
         }
         try task.run()
         task.waitUntilExit()
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        if let d = try stdoutPipe.fileHandleForReading.readToEnd() {
-            stdoutData.append(d)
+
+        try dataLock.synchronized {
+            if let d = try stdoutPipe.fileHandleForReading.readToEnd() {
+                stdoutData.append(d)
+            }
+            XCTAssertEqual(String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), "No files specified.")
         }
-        XCTAssertEqual(String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), "No files specified.")
     }
 
+
+    func test_currentDirectory() throws {
+
+        let process = Process()
+        XCTAssertNil(process.executableURL)
+        XCTAssertNotNil(process.currentDirectoryURL)
+
+        // Test currentDirectoryURL cannot be set to nil even though it is a URL?
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        process.currentDirectoryURL = nil
+        XCTAssertNotNil(process.currentDirectoryURL)
+        XCTAssertEqual(process.currentDirectoryURL, cwd)
+
+        let aFileURL = URL(fileURLWithPath: "/a_file", isDirectory: false)
+        XCTAssertFalse(aFileURL.hasDirectoryPath)
+        XCTAssertEqual(aFileURL.path, "/a_file")
+        process.currentDirectoryURL = aFileURL
+        XCTAssertNotEqual(process.currentDirectoryURL, aFileURL)
+        XCTAssertEqual(process.currentDirectoryPath, "/a_file")
+        XCTAssertTrue(try XCTUnwrap(process.currentDirectoryURL).hasDirectoryPath)
+        XCTAssertEqual(try XCTUnwrap(process.currentDirectoryURL).absoluteString, "file:///a_file/")
+
+        let aDirURL = URL(fileURLWithPath: "/a_dir", isDirectory: true)
+        XCTAssertTrue(aDirURL.hasDirectoryPath)
+        XCTAssertEqual(aDirURL.path, "/a_dir")
+        process.currentDirectoryURL = aDirURL
+        XCTAssertEqual(process.currentDirectoryURL, aDirURL)
+        XCTAssertEqual(process.currentDirectoryPath, "/a_dir")
+        XCTAssertTrue(try XCTUnwrap(process.currentDirectoryURL).hasDirectoryPath)
+        XCTAssertEqual(try XCTUnwrap(process.currentDirectoryURL).absoluteString, "file:///a_dir/")
+
+        process.currentDirectoryPath = ""
+        XCTAssertEqual(process.currentDirectoryPath, "")
+        XCTAssertNil(process.currentDirectoryURL)
+        process.currentDirectoryURL = nil
+        XCTAssertEqual(process.currentDirectoryPath, cwd.path)
+
+
+        process.executableURL = URL(fileURLWithPath: "/some_file_that_doesnt_exist", isDirectory: false)
+        XCTAssertThrowsError(try process.run()) {
+            let code = CocoaError.Code(rawValue: ($0 as? NSError)!.code)
+            XCTAssertEqual(code, .fileReadNoSuchFile)
+        }
+
+        do {
+            let (stdout, _) = try runTask([xdgTestHelperURL().path, "--getcwd"], currentDirectoryPath: "/")
+            XCTAssertEqual(stdout.trimmingCharacters(in: CharacterSet(["\n", "\r"])), "/")
+        }
+
+        do {
+            XCTAssertNotEqual("/", FileManager.default.currentDirectoryPath)
+            XCTAssertNotEqual(FileManager.default.currentDirectoryPath, "/")
+            let (stdout, _) = try runTask([xdgTestHelperURL().path, "--echo-PWD"], currentDirectoryPath: "/")
+            let directory = stdout.trimmingCharacters(in: CharacterSet(["\n", "\r"]))
+            XCTAssertEqual(directory, ProcessInfo.processInfo.environment["PWD"])
+            XCTAssertNotEqual(directory, "/")
+        }
+
+        do {
+            let process = Process()
+            process.executableURL = xdgTestHelperURL()
+            process.arguments = [ "--getcwd" ]
+            process.currentDirectoryPath = ""
+
+            let stdoutPipe = Pipe()
+            process.standardOutput = stdoutPipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                throw Error.TerminationStatus(process.terminationStatus)
+            }
+
+            var stdoutData = Data()
+            if let d = try stdoutPipe.fileHandleForReading.readToEnd() {
+                stdoutData.append(d)
+            }
+
+            guard let stdout = String(data: stdoutData, encoding: .utf8) else {
+                throw Error.UnicodeDecodingError(stdoutData)
+            }
+            let directory = stdout.trimmingCharacters(in: CharacterSet(["\n", "\r"]))
+            XCTAssertEqual(directory, FileManager.default.currentDirectoryPath)
+        } catch {
+            XCTFail(String(describing: error))
+        }
+
+        XCTAssertThrowsError(try runTask([xdgTestHelperURL().path, "--getcwd"], currentDirectoryPath: "/some_directory_that_doesnt_exsit")) { error in
+            let code = CocoaError.Code(rawValue: (error as? NSError)!.code)
+            XCTAssertEqual(code, .fileReadNoSuchFile)
+        }
+    }
+
+    func test_pipeCloseBeforeLaunch() {
+        let process = Process()
+        let stdInput = Pipe()
+        let stdOutput = Pipe()
+
+        process.executableURL = xdgTestHelperURL()
+        process.arguments = ["--cat"]
+        process.standardInput = stdInput
+        process.standardOutput = stdOutput
+
+        let string = "Hello, World"
+        let stdInputPipe = stdInput.fileHandleForWriting
+        XCTAssertNoThrow(try stdInputPipe.write(XCTUnwrap(string.data(using: .utf8))))
+        stdInputPipe.closeFile()
+
+        XCTAssertNoThrow(try process.run())
+        process.waitUntilExit()
+
+        let stdOutputPipe = stdOutput.fileHandleForReading
+        do {
+            let readData = try XCTUnwrap(stdOutputPipe.readToEnd())
+            let readString = String(data: readData, encoding: .utf8)
+            XCTAssertEqual(string, readString)
+        } catch {
+            XCTFail("\(error)")
+        }
+    }
+
+    func test_multiProcesses() {
+        let source = Process()
+        source.executableURL = xdgTestHelperURL()
+        source.arguments = [ "--getcwd" ]
+
+        let cat1 = Process()
+        cat1.executableURL = xdgTestHelperURL()
+        cat1.arguments = [ "--cat" ]
+
+        let cat2 = Process()
+        cat2.executableURL = xdgTestHelperURL()
+        cat2.arguments = [ "--cat" ]
+
+        let pipe1 = Pipe()
+        source.standardOutput = pipe1
+        cat1.standardInput = pipe1
+
+        let pipe2 = Pipe()
+        cat1.standardOutput = pipe2
+        cat2.standardInput = pipe2
+
+        let pipe3 = Pipe()
+        cat2.standardOutput = pipe3
+
+        XCTAssertNoThrow(try source.run())
+        XCTAssertNoThrow(try cat1.run())
+        XCTAssertNoThrow(try cat2.run())
+        cat2.waitUntilExit()
+        cat1.waitUntilExit()
+        source.waitUntilExit()
+
+        do {
+            let data = try XCTUnwrap(pipe3.fileHandleForReading.readToEnd())
+            let pwd = String.init(decoding: data, as: UTF8.self).trimmingCharacters(in: CharacterSet(["\n", "\r"]))
+            XCTAssertEqual(pwd, FileManager.default.currentDirectoryPath.standardizePath())
+        } catch {
+            XCTFail("\(error)")
+        }
+    }
 
     static var allTests: [(String, (TestProcess) -> () throws -> Void)] {
         var tests = [
@@ -592,6 +776,9 @@ class TestProcess : XCTestCase {
             ("test_redirect_all_using_null", test_redirect_all_using_null),
             ("test_redirect_all_using_nil", test_redirect_all_using_nil),
             ("test_plutil", test_plutil),
+            ("test_currentDirectory", test_currentDirectory),
+            ("test_pipeCloseBeforeLaunch", test_pipeCloseBeforeLaunch),
+            ("test_multiProcesses", test_multiProcesses),
         ]
 
 #if !os(Windows)
@@ -656,11 +843,11 @@ class _SignalHelperRunner {
                         }
                         else if strongSelf.gotReady == true {
                             if line == "Signal: SIGINT" {
-                                strongSelf._sigIntCount += 1
+                                strongSelf.sQueue.sync { strongSelf._sigIntCount += 1 }
                                 strongSelf.semaphore.signal()
                             }
                             else if line == "Signal: SIGCONT" {
-                                strongSelf._sigContCount += 1
+                                strongSelf.sQueue.sync { strongSelf._sigContCount += 1 }
                                 strongSelf.semaphore.signal()
                             }
                         }
@@ -690,6 +877,7 @@ class _SignalHelperRunner {
     }
 }
 
+@discardableResult
 internal func runTask(_ arguments: [String], environment: [String: String]? = nil, currentDirectoryPath: String? = nil) throws -> (String, String) {
     let process = Process()
 
@@ -717,17 +905,22 @@ internal func runTask(_ arguments: [String], environment: [String: String]? = ni
 
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
+    let dataLock = NSLock()
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
     var stdoutData = Data()
     stdoutPipe.fileHandleForReading.readabilityHandler = { fh in
-        stdoutData.append(fh.availableData)
+        dataLock.synchronized {
+            stdoutData.append(fh.availableData)
+        }
     }
 
     var stderrData = Data()
     stderrPipe.fileHandleForReading.readabilityHandler = { fh in
-        stderrData.append(fh.availableData)
+        dataLock.synchronized {
+            stderrData.append(fh.availableData)
+        }
     }
 
     try process.run()
@@ -735,34 +928,30 @@ internal func runTask(_ arguments: [String], environment: [String: String]? = ni
     stdoutPipe.fileHandleForReading.readabilityHandler = nil
     stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-    // Drain any data remaining in the pipes
-#if DARWIN_COMPATIBILITY_TESTS
-    // Use old API for now
-    stdoutData.append(stdoutPipe.fileHandleForReading.availableData)
-    stderrData.append(stderrPipe.fileHandleForReading.availableData)
-#else
-    if let d = try stdoutPipe.fileHandleForReading.readToEnd() {
-        stdoutData.append(d)
-    }
-
-    if let d = try stderrPipe.fileHandleForReading.readToEnd() {
-        stderrData.append(d)
-    }
-#endif
-
     guard process.terminationStatus == 0 else {
         throw Error.TerminationStatus(process.terminationStatus)
     }
 
-    guard let stdout = String(data: stdoutData, encoding: .utf8) else {
-        throw Error.UnicodeDecodingError(stdoutData)
-    }
+    return try dataLock.synchronized {
+        // Drain any data remaining in the pipes
+        if let d = try stdoutPipe.fileHandleForReading.readToEnd() {
+            stdoutData.append(d)
+        }
 
-    guard let stderr = String(data: stderrData, encoding: .utf8) else {
-        throw Error.UnicodeDecodingError(stderrData)
-    }
+        if let d = try stderrPipe.fileHandleForReading.readToEnd() {
+            stderrData.append(d)
+        }
 
-    return (stdout, stderr)
+        guard let stdout = String(data: stdoutData, encoding: .utf8) else {
+            throw Error.UnicodeDecodingError(stdoutData)
+        }
+
+        guard let stderr = String(data: stderrData, encoding: .utf8) else {
+            throw Error.UnicodeDecodingError(stderrData)
+        }
+
+        return (stdout, stderr)
+    }
 }
 
 private func parseEnv(_ env: String) throws -> [String: String] {

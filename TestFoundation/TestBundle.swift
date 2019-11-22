@@ -98,7 +98,11 @@ class BundlePlayground {
             case .executable:
                 return ""
             case .library:
+#if os(Windows)
+                return ""
+#else
                 return "lib"
+#endif
             }
         }
     }
@@ -575,7 +579,7 @@ class TestBundle : XCTestCase {
             ("test_bundleLoad", test_bundleLoad),
             ("test_bundleLoadWithError", test_bundleLoadWithError),
             ("test_bundleWithInvalidPath", test_bundleWithInvalidPath),
-            ("test_bundlePreflight", test_bundlePreflight),
+            ("test_bundlePreflight", testExpectedToFailOnWindows(test_bundlePreflight, "Preflight checks aren't supported for DLLs")),
             ("test_bundleFindExecutable", test_bundleFindExecutable),
             ("test_bundleFindAuxiliaryExecutables", test_bundleFindAuxiliaryExecutables),
             ("test_bundleForClass", testExpectedToFailOnWindows(test_bundleForClass, "Functionality not yet implemented on Windows. SR-XXXX")),

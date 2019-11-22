@@ -528,11 +528,7 @@ private var shouldRunXFailTests: Bool {
 
 
 private func printStderr(_ msg: String) {
-#if DARWIN_COMPATIBILITY_TESTS
-    FileHandle.standardError.write(Data(msg.utf8))
-#else
     try? FileHandle.standardError.write(contentsOf: Data(msg.utf8))
-#endif
 }
 
 func shouldAttemptXFailTests(_ reason: String) -> Bool {
@@ -559,6 +555,12 @@ func shouldAttemptAndroidXFailTests(_ reason: String) -> Bool {
     return true
     #endif
 }
+
+#if !DARWIN_COMPATIBILITY_TESTS
+func testCaseExpectedToFail<T: XCTestCase>(_ allTests: [(String, (T) -> () throws -> Void)], _ reason: String) -> XCTestCaseEntry {
+    return testCase(allTests.map { ($0.0, testExpectedToFail($0.1, "This test suite is disabled: \(reason)")) })
+}
+#endif
 
 func appendTestCaseExpectedToFail<T: XCTestCase>(_ reason: String, _ allTests: [(String, (T) -> () throws -> Void)], into array: inout [XCTestCaseEntry]) {
     if shouldAttemptXFailTests(reason) {
@@ -621,6 +623,12 @@ extension XCTest {
     }
 }
 
+extension String {
+    public func standardizePath() -> String {
+        URL(fileURLWithPath: self).resolvingSymlinksInPath().path
+    }
+}
+
 extension FileHandle: TextOutputStream {
     public func write(_ string: String) {
         write(Data(string.utf8))
@@ -641,3 +649,10 @@ extension FileHandle: TextOutputStream {
     }
 }
 
+extension NSLock {
+    public func synchronized<T>(_ closure: () throws -> T) rethrows -> T {
+        self.lock()
+        defer { self.unlock() }
+        return try closure()
+    }
+}

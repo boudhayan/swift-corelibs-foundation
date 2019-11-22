@@ -81,7 +81,11 @@ CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_CANT_GET_HOST; // C
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_COULDNT_SET_TYPE; // CURLE_FTP_COULDNT_SET_TYPE
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodePARTIAL_FILE; // CURLE_PARTIAL_FILE
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_COULDNT_RETR_FILE; // CURLE_FTP_COULDNT_RETR_FILE
+#if LIBCURL_VERSION_MAJOR > 7 || (LIBCURL_VERSION_MAJOR == 7 && LIBCURL_VERSION_MINOR > 67) || (LIBCURL_VERSION_MAJOR == 7 && LIBCURL_VERSION_MINOR == 67 && LIBCURL_VERSION_PATCH >= 1)
+CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeHTTP3; // CURLE_HTTP3
+#else
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeOBSOLETE20; // CURLE_OBSOLETE20
+#endif
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeQUOTE_ERROR; // CURLE_QUOTE_ERROR
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeHTTP_RETURNED_ERROR; // CURLE_HTTP_RETURNED_ERROR
 CF_EXPORT CFURLSessionEasyCode const CFURLSessionEasyCodeWRITE_ERROR; // CURLE_WRITE_ERROR
@@ -601,7 +605,7 @@ CF_EXPORT CFURLSessionMultiCode CFURLSession_multi_setopt_ptr(CFURLSessionMultiH
 CF_EXPORT CFURLSessionMultiCode CFURLSession_multi_setopt_l(CFURLSessionMultiHandle _Nonnull multi_handle, CFURLSessionMultiOption option, long a);
 CF_EXPORT CFURLSessionMultiCode CFURLSession_multi_setopt_sf(CFURLSessionMultiHandle _Nonnull multi_handle, CFURLSessionMultiOption option, int (*_Nonnull a)(CFURLSessionEasyHandle _Nonnull, CFURLSession_socket_t, int, void *_Nullable, void *_Nullable));
 CF_EXPORT CFURLSessionMultiCode CFURLSession_multi_setopt_tf(CFURLSessionMultiHandle _Nonnull multi_handle, CFURLSessionMultiOption option, int (*_Nonnull a)(CFURLSessionMultiHandle _Nonnull, long, void *_Nullable));
-CF_EXPORT CFURLSessionEasyCode CFURLSession_easy_setopt_csf(CFURLSessionEasyHandle _Nonnull curl, CFURLSessionOption option, int (*_Nonnull a)(void* _Nullable clientp, CFURLSession_socket_t));
+
 CF_EXPORT CFURLSessionEasyCode CFURLSessionInit(void);
 
 

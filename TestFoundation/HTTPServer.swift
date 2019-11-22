@@ -51,8 +51,13 @@ class _TCPSocket {
     private let sendFlags: CInt
 #endif
     private var listenSocket: SOCKET!
-    private var socketAddress = UnsafeMutablePointer<sockaddr_in>.allocate(capacity: 1) 
-    private var connectionSocket: SOCKET?
+    private var socketAddress = UnsafeMutablePointer<sockaddr_in>.allocate(capacity: 1)
+    private var _connectionSocketLock = NSLock()
+    private var _connectionSocket: SOCKET?
+    private var connectionSocket: SOCKET? {
+        get { _connectionSocketLock.synchronized { _connectionSocket } }
+        set { _connectionSocketLock.synchronized { _connectionSocket = newValue } }
+    }
     
     private func isNotNegative(r: CInt) -> Bool {
         return r != -1
@@ -229,13 +234,15 @@ class _TCPSocket {
     }
 
     func closeClient() {
-        if let connectionSocket = self.connectionSocket {
+        _connectionSocketLock.synchronized {
+            if let connectionSocket = _connectionSocket {
 #if os(Windows)
-            closesocket(connectionSocket)
+                closesocket(connectionSocket)
 #else
-            close(connectionSocket)
+                close(connectionSocket)
 #endif
-            self.connectionSocket = nil
+                _connectionSocket = nil
+            }
         }
     }
 
@@ -588,17 +595,16 @@ public class TestURLSessionServer {
         }
 
         if uri == "/requestCookies" {
-            let text = request.getCommaSeparatedHeaders()
-            return _HTTPResponse(response: .OK, headers: "Content-Length: \(text.data(using: .utf8)!.count)\r\nSet-Cookie: fr=anjd&232; Max-Age=7776000; path=/\r\nSet-Cookie: nm=sddf&232; Max-Age=7776000; path=/; domain=.swift.org; secure; httponly\r\n", body: text)
+            return _HTTPResponse(response: .OK, headers: "Set-Cookie: fr=anjd&232; Max-Age=7776000; path=/\r\nSet-Cookie: nm=sddf&232; Max-Age=7776000; path=/; domain=.swift.org; secure; httponly\r\n", body: "")
         }
 
-        if uri == "/setCookies" {
+        if uri == "/echoHeaders" {
             let text = request.getCommaSeparatedHeaders()
             return _HTTPResponse(response: .OK, headers: "Content-Length: \(text.data(using: .utf8)!.count)", body: text)
         }
         
-        if uri == "/redirectSetCookies" {
-            return _HTTPResponse(response: .REDIRECT, headers: "Location: /setCookies\r\nSet-Cookie: redirect=true; Max-Age=7776000; path=/", body: "")
+        if uri == "/redirectToEchoHeaders" {
+            return _HTTPResponse(response: .REDIRECT, headers: "Location: /echoHeaders\r\nSet-Cookie: redirect=true; Max-Age=7776000; path=/", body: "")
         }
 
         if uri == "/UnitedStates" {

@@ -110,10 +110,6 @@ CFURLSessionEasyCode CFURLSession_easy_setopt_tc(CFURLSessionEasyHandle _Nonnull
     return MakeEasyCode(curl_easy_setopt(curl,  option.value, a));
 }
 
-CFURLSessionEasyCode CFURLSession_easy_setopt_csf(CFURLSessionEasyHandle _Nonnull curl, CFURLSessionOption option, int (*_Nonnull a)(void *_Nullable clientp, CFURLSession_socket_t)) {
-     return MakeEasyCode(curl_easy_setopt(curl, option.value, a));
-}
-
 CFURLSessionEasyCode CFURLSession_easy_getinfo_long(CFURLSessionEasyHandle _Nonnull curl, CFURLSessionInfo info, long *_Nonnull a) {
     return MakeEasyCode(curl_easy_getinfo(curl, info.value, a));
 }
@@ -165,7 +161,11 @@ CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_CANT_GET_HOST = { CURLE_FTP_C
 CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_COULDNT_SET_TYPE = { CURLE_FTP_COULDNT_SET_TYPE };
 CFURLSessionEasyCode const CFURLSessionEasyCodePARTIAL_FILE = { CURLE_PARTIAL_FILE };
 CFURLSessionEasyCode const CFURLSessionEasyCodeFTP_COULDNT_RETR_FILE = { CURLE_FTP_COULDNT_RETR_FILE };
+#if LIBCURL_VERSION_MAJOR > 7 || (LIBCURL_VERSION_MAJOR == 7 && LIBCURL_VERSION_MINOR > 67) || (LIBCURL_VERSION_MAJOR == 7 && LIBCURL_VERSION_MINOR == 67 && LIBCURL_VERSION_PATCH >= 1)
+CFURLSessionEasyCode const CFURLSessionEasyCodeHTTP3 = { CURLE_HTTP3 };
+#else
 CFURLSessionEasyCode const CFURLSessionEasyCodeOBSOLETE20 = { CURLE_OBSOLETE20 };
+#endif
 CFURLSessionEasyCode const CFURLSessionEasyCodeQUOTE_ERROR = { CURLE_QUOTE_ERROR };
 CFURLSessionEasyCode const CFURLSessionEasyCodeHTTP_RETURNED_ERROR = { CURLE_HTTP_RETURNED_ERROR };
 CFURLSessionEasyCode const CFURLSessionEasyCodeWRITE_ERROR = { CURLE_WRITE_ERROR };
